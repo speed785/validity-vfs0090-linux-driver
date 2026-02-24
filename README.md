@@ -1,7 +1,75 @@
 ## Validity Sensor `138a:0090` and `138a:0097` libfprint driver
 #### A linux driver for 2016 ThinkPad's fingerprint readers
 
-[![See it in action!](https://img.youtube.com/vi/dYe8eKaoUSE/0.jpg)](https://www.youtube.com/watch?v=dYe8eKaoUSE)`
+> **Note:** This is a fork of the original project by [3v1n0 (Marco Trevisan)](https://github.com/3v1n0/libfprint-tod-vfs0090). All credit for the original driver goes to him and the contributors listed below. We forked this project solely to fix a build compatibility issue with newer versions of `libfprint-2-tod`, and to document a working installation process for modern Ubuntu (24.04) and kernel 6.17+.
+
+---
+
+### What we fixed (fork changes)
+
+The original driver failed to compile against newer versions of `libfprint-2-tod` (1.94.7+tod1 and later) due to an API change in `fpi_ssm_next_state_delayed` — the function's third argument (`GDestroyNotify`) was removed upstream. This caused two hard compilation errors:
+
+```
+error: too many arguments to function 'fpi_ssm_next_state_delayed'
+```
+
+**Fix:** Removed the trailing `NULL` argument from both call sites in `vfs0090.c`:
+- `led_blink_callback_with_ssm()` — line 1632
+- `reactivate_ssm()` — line 2954
+
+**Tested on:**
+- Hardware: ThinkPad X1 Carbon 4th Gen (fingerprint sensor `138a:0090` / VFS7500)
+- OS: Ubuntu 24.04 LTS
+- Kernel: 6.17.0
+- libfprint-2-tod: 1.94.7+tod1
+
+---
+
+### Complete installation guide (Ubuntu 24.04 / modern systems)
+
+If you're on a **modern Ubuntu** (22.04+) and the PPA approach below doesn't work, build from source:
+
+```bash
+# 1. Install build dependencies
+sudo apt install -y meson ninja-build libfprint-2-dev libfprint-2-tod-dev \
+    libnss3-dev libssl-dev libpixman-1-dev
+
+# 2. Clone this repo
+git clone https://github.com/speed785/libfprint-tod-vfs0090.git
+cd libfprint-tod-vfs0090
+
+# 3. Configure and build
+meson setup builddir
+ninja -C builddir
+
+# 4. Install driver and udev rules
+sudo ninja -C builddir install
+sudo cp 60-libfprint-2-tod-vfs0090.rules /usr/lib/udev/rules.d/
+
+# 5. Initialize the sensor (if not already done)
+sudo snap install validity-sensors-tools
+sudo snap connect validity-sensors-tools:raw-usb
+sudo bash -c 'cd /tmp && echo "" | validity-sensors-tools.initializer'
+# Note: "Flash is already partitioned" is normal if sensor was previously initialized
+
+# 6. Disable python-validity if installed (conflicts with this driver)
+sudo systemctl mask python3-validity open-fprintd
+sudo systemctl stop python3-validity open-fprintd
+
+# 7. Make sure standard fprintd is running
+sudo apt install -y fprintd
+sudo systemctl start fprintd
+sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# 8. Enroll your fingerprints
+fprintd-enroll -f right-index-finger $USER
+```
+
+Then enable fingerprint login in **Settings → Users → Fingerprint Login**.
+
+---
+
+[![See it in action!](https://img.youtube.com/vi/dYe8eKaoUSE/0.jpg)](https://www.youtube.com/watch?v=dYe8eKaoUSE)
 
 Thanks to the amazing work that [nmikhailov](https://github.com/nmikhailov) did in his [prototype](https://github.com/nmikhailov/Validity90/) and [uunicorn](https://github.com/uunicorn/) in [python-validity](https://github.com/uunicorn/python-validity) and [synaWudfBioUsb-sandbox](https://github.com/uunicorn/synaWudfBioUsb-sandbox), I spent some time in getting a libfprint driver for the `138a:0090` (and `138a:0097`) device up...
 
