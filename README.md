@@ -35,7 +35,7 @@ sudo apt install -y meson ninja-build libfprint-2-dev libfprint-2-tod-dev \
     libnss3-dev libssl-dev libpixman-1-dev
 
 # 2. Clone this repo
-git clone https://github.com/speed785/libfprint-tod-vfs0090.git
+git clone https://github.com/speed785/validity-vfs0090-linux-driver.git
 cd libfprint-tod-vfs0090
 
 # 3. Configure and build
