@@ -17,11 +17,17 @@ error: too many arguments to function 'fpi_ssm_next_state_delayed'
 - `led_blink_callback_with_ssm()` — line 1632
 - `reactivate_ssm()` — line 2954
 
+The original HMAC path used NSS PK11 helpers for TLS record authentication. On some modern Ubuntu 24.04 systems, `PK11_GetBestSlot(CKM_SHA256_HMAC)` can return `NULL`; the old code passed that null slot into `PK11_ImportSymKey`, which can crash `fprintd` during verification or login.
+
+**Fix:** Use OpenSSL `HMAC(EVP_sha256())` for SHA-256 HMAC generation and propagate encryption failures through libfprint errors instead of dereferencing invalid NSS state.
+
 **Tested on:**
 - Hardware: ThinkPad X1 Carbon 4th Gen (fingerprint sensor `138a:0090` / VFS7500)
 - OS: Ubuntu 24.04 LTS
 - Kernel: 6.17.0
+- fprintd: 1.94.3
 - libfprint-2-tod: 1.94.7+tod1
+- Verification: `fprintd-verify` returns `verify-match` and `fprintd.service` remains stable
 
 ---
 
@@ -62,7 +68,7 @@ sudo systemctl start fprintd
 sudo udevadm control --reload-rules && sudo udevadm trigger
 
 # 8. Enroll your fingerprints
-fprintd-enroll -f right-index-finger $USER
+fprintd-enroll -f <finger-name> "$USER"
 ```
 
 Then enable fingerprint login in **Settings → Users → Fingerprint Login**.

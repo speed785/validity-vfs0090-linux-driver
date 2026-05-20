@@ -30,6 +30,7 @@
 #include <openssl/err.h>
 #include <openssl/ec.h>
 #include <openssl/evp.h>
+#include <openssl/hmac.h>
 #include <openssl/ssl.h>
 
 #include "vfs0090.h"
@@ -363,6 +364,13 @@ async_write_encrypted_to_usb (FpDevice              *dev,
 
   encrypted_data = tls_encrypt (dev, data, data_size,
                                 &encrypted_data_size);
+  if (!encrypted_data)
+    {
+      g_autoptr(GError) error = fpi_device_error_new_msg (FP_DEVICE_ERROR_GENERAL,
+                                                          "Failed to encrypt TLS payload");
+      fpi_device_action_error (dev, g_steal_pointer (&error));
+      return;
+    }
 
   enc_op = g_new0 (VfsAsyncUsbEncryptedOperationData, 1);
   enc_op->callback = callback;
@@ -619,48 +627,22 @@ usb_operation_perform (const char *op, gboolean ret, FpDevice *dev, GError **err
    }
  */
 
-static PK11Context *
-hmac_make_context (const unsigned char *key_bytes, int key_len)
-{
-  PK11SymKey *pkKey;
-  CK_MECHANISM_TYPE hmacMech = CKM_SHA256_HMAC;
-  PK11SlotInfo *slot = PK11_GetBestSlot (hmacMech, NULL);
-
-  SECItem key;
-
-  key.type = siBuffer;
-  key.data = (unsigned char *) key_bytes;
-  key.len = key_len;
-
-  pkKey = PK11_ImportSymKey (slot, hmacMech, PK11_OriginUnwrap, CKA_SIGN, &key, NULL);
-
-  SECItem param = { .type = siBuffer, .data = NULL, .len = 0 };
-
-  PK11Context * context = PK11_CreateContextBySymKey (hmacMech, CKA_SIGN, pkKey, &param);
-  PK11_DigestBegin (context);
-  PK11_FreeSlot (slot);
-  PK11_FreeSymKey (pkKey);
-
-  return context;
-}
-
 static unsigned char *
 hmac_compute (const unsigned char *key, int key_len, unsigned char * data, int data_len)
 {
-  // XXX: REUSE CONTEXT HERE, don't create it all the times
-  PK11Context * context = hmac_make_context (key, key_len);
-
-  PK11_DigestOp (context, data, data_len);
-
-  unsigned int len = 0x20;
+  unsigned int len = EVP_MD_get_size (EVP_sha256 ());
   unsigned char *res = g_malloc (len);
-  PK11_DigestFinal (context, res, &len, len);
-  PK11_DestroyContext (context, PR_TRUE);
+
+  if (!HMAC (EVP_sha256 (), key, key_len, data, data_len, res, &len))
+    {
+      g_free (res);
+      return NULL;
+    }
 
   return res;
 }
 
-static void
+static gboolean
 mac_then_encrypt (unsigned char type, unsigned char *key_block, const unsigned char *data, int data_len, unsigned char **res, int *res_len)
 {
   g_autofree unsigned char *all_data = NULL;
@@ -684,6 +666,8 @@ mac_then_encrypt (unsigned char type, unsigned char *key_block, const unsigned c
   memcpy (all_data + prefix_len, data, data_len);
 
   hmac = hmac_compute (key_block, 0x20, all_data, prefix_len + data_len);
+  if (!hmac)
+    return FALSE;
   memcpy (all_data + prefix_len + data_len, hmac, 0x20);
 
   context = EVP_CIPHER_CTX_new ();
@@ -707,6 +691,8 @@ mac_then_encrypt (unsigned char type, unsigned char *key_block, const unsigned c
 
   EVP_EncryptFinal (context, *res + 0x10 + written + wr3, &wr2);
   *res_len = written + wr2 + wr3 + 0x10;
+
+  return TRUE;
 }
 
 static unsigned char *
@@ -721,7 +707,8 @@ tls_encrypt (FpDevice *dev,
 
   g_assert (vdev->key_block);
 
-  mac_then_encrypt (0x17, vdev->key_block, data, data_size, &res, &res_len);
+  if (!mac_then_encrypt (0x17, vdev->key_block, data, data_size, &res, &res_len))
+    return NULL;
 
   wr = g_malloc (res_len + 5);
   memcpy (wr + 5, res, res_len);
@@ -1236,7 +1223,13 @@ handshake_ssm (FpiSsm *ssm, FpDevice *dev)
         memcpy (finished_message + 0x04, client_finished, G_N_ELEMENTS (client_finished));
         // copy handshake protocol
 
-        mac_then_encrypt (0x16, vdev->key_block, finished_message, 0x10, &final, &len);
+        if (!mac_then_encrypt (0x16, vdev->key_block, finished_message, 0x10, &final, &len))
+          {
+            error = fpi_device_error_new_msg (FP_DEVICE_ERROR_GENERAL,
+                                              "Failed to encrypt TLS handshake payload");
+            fpi_ssm_mark_failed (ssm, error);
+            break;
+          }
         memcpy (vinit->tls_certificate + 0x169, final, len);
 
         fpi_ssm_next_state (ssm);
