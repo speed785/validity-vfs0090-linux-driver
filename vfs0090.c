@@ -1763,6 +1763,12 @@ handle_db_match_reply (FpiDeviceVfs0090 *vdev, FpiMatchResult result)
         FpPrint *print;
         GVariant *data;
 
+        /* Match-on-host: always image-enroll. A stale on-chip DB *match* would
+         * otherwise complete enroll with a non-NBIS print -> fprintd "incorrect
+         * print data" + an FPI_PRINT_NBIS assertion, aborting at stage 1. */
+        if (vfs_device_supports_capture (dev))
+          return;
+
         if (vdev->match_result != FPI_MATCH_SUCCESS)
           {
             fp_dbg ("Finger doesn't match any enrolled finger in DB");
@@ -2618,8 +2624,10 @@ finger_scan_ssm (FpiSsm *ssm, FpDevice *dev)
         else if (action == FPI_DEVICE_ACTION_VERIFY ||
                  action == FPI_DEVICE_ACTION_IDENTIFY)
           {
-            fp_warn ("Low quality image in verification, might fail");
-            fpi_ssm_jump_to_state (ssm, SCAN_STATE_SUCCESS);
+            /* Low-quality image -> too few minutiae; force-matching false-rejects.
+             * Ask for a re-touch instead (like the enroll path). */
+            fp_warn ("Low quality image in verification, requesting re-touch");
+            start_scan_error_handler_ssm (dev, ssm, FP_DEVICE_RETRY_CENTER_FINGER);
           }
       }
       break;
