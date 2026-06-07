@@ -355,6 +355,10 @@ static const VfsDataExchange INIT_SEQUENCES[] = {
     .rsp_length = 2,
   },
   {
+    /* Pairing tools size partition 4 differently (python-validity 0x80000 vs the
+     * hardcoded 0x30000), so the strict compare fails 0x04af. Accept either
+     * instead of hardcoding one value. */
+    .weak_match = TRUE,
     .msg = INIT_SEQUENCE_MSG5,
     .msg_length = G_N_ELEMENTS (INIT_SEQUENCE_MSG5),
     .rsp = INIT_SEQUENCE_RSP5,
